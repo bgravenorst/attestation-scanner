@@ -1,0 +1,25 @@
+# === Ignore Node Modules ===
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# === Ignore Environment Variables (Sensitive Data) ===
+.env
+
+# === Ignore Log Files ===
+*.log
+logs/
+debug.log
+error.log
+
+# === Ignore Data Files (JSON, CSV) ===
+attestations.json
+attestations.csv
+last_block.txt
+
+# === Ignore System Files ===
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
