@@ -2,7 +2,6 @@ import { ethers } from "ethers";
 import fs from "fs";
 import dotenv from "dotenv";
 import axios from "axios";
-import { decodeAbiParameters, parseAbiParameters } from "viem"; // Import Viem
 
 dotenv.config();
 
@@ -21,220 +20,197 @@ const CSV_FILE = "./attestations.csv";
 
 // === CONTRACT ABI ===
 const ABI = [
-    {
-        "inputs": [
-            {
-                "components": [
-                    { "internalType": "bytes32", "name": "schemaId", "type": "bytes32" },
-                    { "internalType": "uint64", "name": "expirationDate", "type": "uint64" },
-                    { "internalType": "bytes", "name": "subject", "type": "bytes" },
-                    { "internalType": "bytes", "name": "attestationData", "type": "bytes" }
-                ],
-                "internalType": "struct AttestationPayload",
-                "name": "attestationPayload",
-                "type": "tuple"
-            },
-            { "internalType": "bytes[]", "name": "validationPayloads", "type": "bytes[]" }
+  {
+    "inputs": [
+      {
+        "components": [
+          { "internalType": "bytes32", "name": "schemaId", "type": "bytes32" },
+          { "internalType": "uint64", "name": "expirationDate", "type": "uint64" },
+          { "internalType": "bytes",   "name": "subject",       "type": "bytes" },
+          { "internalType": "bytes",   "name": "attestationData","type": "bytes" }
         ],
-        "name": "attest",
-        "outputs": [],
-        "stateMutability": "payable",
-        "type": "function"
-    }
-
+        "internalType": "struct AttestationPayload",
+        "name": "attestationPayload",
+        "type": "tuple"
+      },
+      { "internalType": "bytes[]", "name": "validationPayloads", "type": "bytes[]" }
+    ],
+    "name": "attest",
+    "outputs": [],
+    "stateMutability": "payable",
+    "type": "function"
+  }
 ];
 const contract = new ethers.Contract(CONTRACT_ADDRESS, ABI, provider);
 
-// Viem Schema for Attestation Data Decoding
-const attestationDataSchema = "(bool isPositive, string articlePage, address submitter)";
-
 // === FUNCTION: Decode the attestation data which exists in attestationData ===
 function decodeAttestationData(encodedData) {
-    try {
-        if (!encodedData || encodedData === "0x") {
-            console.warn("⚠️ Skipping empty attestation data.");
-            return null;
-        }
-
-        console.log("🔍 Encoded Attestation Data (Hex):", encodedData);
-
-        // Decode using Viem
-        const decodedArray = decodeAbiParameters(parseAbiParameters(attestationDataSchema), encodedData);
-
-        console.log("✅ Decoded Data in function decodeAttestationData:", decodedArray);
-
-        // ✅ Extract the first object from the array
-        if (Array.isArray(decodedArray) && decodedArray.length > 0) {
-            const decodedData = decodedArray[0];
-
-            return {
-                isPositive: Boolean(decodedData.isPositive),  // Ensure boolean
-                articlePage: decodedData.articlePage ?? "N/A", // Ensure string
-                submitter: decodedData.submitter ?? "N/A"    // Ensure string
-            };
-        } else {
-            console.error("❌ Error: Decoded data is not in expected format.");
-            return null;
-        }
-    } catch (error) {
-        console.error("❌ Error decoding attestation data:", error.message);
-        return null;
-    }
+  if (!encodedData || encodedData === "0x") {
+    console.warn("⚠️ Skipping empty attestation data.");
+    return null;
+  }
+//  console.log("🔍 Encoded Attestation Data (Hex):", encodedData);
+  try {
+    const decoded = ethers.utils.defaultAbiCoder.decode(
+      ["bool", "string", "address"],
+      encodedData
+    );
+    // decoded is an array: [ isPositive, articlePage, submitter ]
+    const [isPositive, articlePage, submitter] = decoded;
+    console.log("✅ Decoded with Ethers:", { isPositive, articlePage, submitter });
+    return { isPositive, articlePage, submitter };
+  } catch (error) {
+    console.error("❌ Error decoding with Ethers:", error.message);
+    return null;
+  }
 }
 
-
-
+// === FUNCTION: Parse a 32-byte subject into a valid address ===
+function parseSubjectAsAddress(subjectBytes) {
+  // If subject is 32 bytes (0x + 64 hex chars), extract the last 20 bytes.
+  if (subjectBytes.length === 66) {
+    const last40 = subjectBytes.slice(-40);
+    return ethers.utils.getAddress("0x" + last40);
+  } else {
+    return ethers.utils.getAddress(subjectBytes);
+  }
+}
 
 // === FUNCTION: Initialize New JSON and CSV File each run ===
 const initializeFiles = () => {
-    fs.writeFileSync(JSON_FILE, "", "utf8");
-    fs.writeFileSync(CSV_FILE, "txHash,blockNumber,schemaId,subject,isPositive,articlePage,submitter,timestamp\n", "utf8"); // CSV headers
+  fs.writeFileSync(JSON_FILE, "", "utf8");
+  fs.writeFileSync(
+    CSV_FILE,
+    "txHash,blockNumber,from,timestamp,articlePage,positiveFeedback,negativeFeedback\n",
+    "utf8"
+  );
 };
 
 // Save Attestation to JSON
 const saveToJSON = (attestation) => {
-    // Convert attestation object to a JSON string, followed by a newline
-    const jsonString = JSON.stringify(attestation, null, 2) + "\n";  
-    fs.appendFileSync(JSON_FILE, jsonString, "utf8");
+  const jsonString = JSON.stringify(attestation, null, 2) + "\n";
+  fs.appendFileSync(JSON_FILE, jsonString, "utf8");
 };
 
-
-// Save attestation to CSV
+// Save Attestation to CSV
 const saveToCSV = (attestation) => {
-    // Ensure values are properly formatted as strings
-    const isPositive = String(attestation.isPositive);
-    const articlePage = String(attestation.articlePage);
-    const submitter = String(attestation.submitter);
-
-    // Construct the CSV line properly
-    const csvLine = `${attestation.txHash},${attestation.blockNumber},${attestation.schemaId},${attestation.subject},${isPositive},${articlePage},${submitter},${attestation.timestamp}\n`;
-
-    // Append to the CSV file
-    fs.appendFileSync(CSV_FILE, csvLine, "utf8");
+  const isPositive = String(attestation.isPositive);
+  const articlePage = String(attestation.articlePage);
+  const submitter = String(attestation.submitter);
+  const csvLine = `${attestation.txHash},${attestation.blockNumber},${attestation.from},${attestation.timestamp},${attestation.articlePage},${attestation.positiveFeedback},${attestation.negativeFeedback}\n`;
+  fs.appendFileSync(CSV_FILE, csvLine, "utf8");
 };
 
-
-
-// Decode Attestation is an asynchronous function (async) that interacts with the blockchain
-// It fetches transaction data using await and processes attestations by sending it to decodeAttestationData.
+// === FUNCTION: Decode a single Attestation from a transaction ===
 const decodeAttestation = async (txHash, blockNumber) => {
-    try {
-        const tx = await provider.getTransaction(txHash);
-        if (!tx || tx.to?.toLowerCase() !== CONTRACT_ADDRESS) {
-            console.warn(`⚠️ Skipping non-matching transaction: ${txHash}`);
-            return;
-        }
-
-        if (!tx.data || tx.data === "0x") {
-            console.warn(`⚠️ Skipping transaction without input data: ${txHash}`);
-            return;
-        }
-
-        const decoded = contract.interface.parseTransaction({ data: tx.data });
-        if (!decoded || !decoded.args) {
-            console.warn(`⚠️ Could not decode transaction: ${txHash}`);
-            return;
-        }
-
-        console.log(`🔍 Decoded transaction data for ${txHash}:`, decoded);
-
-        const [attestationPayload, validationPayloads] = decoded.args;
-        console.log("🔍 Extracted Attestation Payload:", attestationPayload);
-
-        if (!attestationPayload || Object.keys(attestationPayload).length === 0) {
-            console.error("❌ Error: attestationPayload is empty or undefined.");
-            return;
-        }
-
-        const schemaId = attestationPayload.schemaId;
-        const subject = attestationPayload.subject;
-        const attestationDataEncoded = attestationPayload.attestationData;
-
-        console.log("🔍 Raw Attestation Data (Encoded):", attestationDataEncoded);
-
-        let decodedAttestationData;
-        try {
-            decodedAttestationData = decodeAttestationData(attestationDataEncoded);
-        } catch (decodeError) {
-            console.error(`❌ Error decoding attestation data:`, decodeError.message);
-            return;
-        }
-
-        // ✅ Ensure values are properly extracted
-        if (!decodedAttestationData) {
-            console.error("❌ Error: Decoded attestation data is null.");
-            return;
-        }
-
-        const isPositive = decodedAttestationData.isPositive;
-        const articlePage = decodedAttestationData.articlePage;
-        const submitter = decodedAttestationData.submitter;
-        
-        const attestation = {
-            txHash,
-            blockNumber,
-            schemaId,
-            subject: ethers.utils.getAddress(subject),
-            isPositive,
-            articlePage,
-            submitter,
-            timestamp: new Date().toISOString()
-        };
-
-        console.log("📜 New Attestation Found:", attestation);
-
-        saveToJSON(attestation);
-        saveToCSV(attestation);
-
-    } catch (error) {
-        console.error(`❌ Error decoding transaction ${txHash}:`, error);
+  try {
+    const tx = await provider.getTransaction(txHash);
+    if (!tx || tx.to?.toLowerCase() !== CONTRACT_ADDRESS) {
+      console.warn(`⚠️ Skipping non-matching transaction: ${txHash}`);
+      return;
     }
-};
+    if (!tx.data || tx.data === "0x") {
+      console.warn(`⚠️ Skipping transaction without input data: ${txHash}`);
+      return;
+    }
 
+    const decoded = contract.interface.parseTransaction({ data: tx.data });
+    if (!decoded || !decoded.args) {
+      console.warn(`⚠️ Could not decode transaction: ${txHash}`);
+      return;
+    }
+//    console.log(`🔍 Decoded transaction data for ${txHash}:`, decoded);
+
+    const [attestationPayload, validationPayloads] = decoded.args;
+//    console.log("🔍 Extracted Attestation Payload:", attestationPayload);
+    if (!attestationPayload || Object.keys(attestationPayload).length === 0) {
+      console.error("❌ Error: attestationPayload is empty or undefined.");
+      return;
+    }
+
+    const schemaId = attestationPayload.schemaId;
+    const rawSubject = attestationPayload.subject;
+    const attestationDataEncoded = attestationPayload.attestationData;
+//    console.log("🔍 Raw Attestation Data (Encoded):", attestationDataEncoded);
+
+    let decodedAttestationData = decodeAttestationData(attestationDataEncoded);
+    if (!decodedAttestationData) {
+      console.error("❌ Error: Decoded attestation data is null.");
+      return;
+    }
+
+    // Parse subject address from 32-byte value.
+    let subjectAddress;
+    try {
+      subjectAddress = parseSubjectAsAddress(rawSubject);
+    } catch (err) {
+      console.error("Invalid subject address:", err);
+      return;
+    }
+
+    // Fetch block to get its timestamp.
+    const block = await provider.getBlock(blockNumber);
+    const blockTimestamp = new Date(block.timestamp * 1000).toISOString();
+
+    const attestation = {
+      txHash,
+      blockNumber,
+      from: decodedAttestationData.submitter,
+      timestamp: blockTimestamp,
+      articlePage: decodedAttestationData.articlePage,
+      positiveFeedback: decodedAttestationData.isPositive ? 1 : 0,
+      negativeFeedback: decodedAttestationData.isPositive ? 0 : 1,
+    };
+
+    console.log("📜 Attestation Found:", attestation);
+    saveToJSON(attestation);
+    saveToCSV(attestation);
+  } catch (error) {
+    console.error(`❌ Error decoding transaction ${txHash}:`, error);
+  }
+};
 
 // === FUNCTION: Fetch Transactions from LineaScan API ===
-const fetchTransactionsFromExplorer = async (contract) => {
-    try {
-        console.log("🔍 Fetching transactions from LineaScan...");
-        const response = await axios.get(LINEASCAN_TX_API);
-        if (response.data.status !== "1") {
-            console.error("❌ Error: LineaScan API returned an error:", response.data.message);
-            return;
-        }
-
-        const transactions = response.data.result;
-
-        for (const tx of transactions) {
-            if (tx.to.toLowerCase() === CONTRACT_ADDRESS) {
-                decodeAttestation(tx.hash, parseInt(tx.blockNumber), contract);
-            }
-        }
-    } catch (error) {
-        console.error("❌ Error fetching transactions from LineaScan:", error);
+const fetchTransactionsFromExplorer = async () => {
+  try {
+    console.log("🔍 Fetching transactions from LineaScan...");
+    const response = await axios.get(LINEASCAN_TX_API);
+    if (response.data.status !== "1") {
+      console.error("❌ Error: LineaScan API returned an error:", response.data.message);
+      return;
     }
+    const transactions = response.data.result;
+    for (const tx of transactions) {
+      if (tx.to.toLowerCase() === CONTRACT_ADDRESS) {
+        decodeAttestation(tx.hash, parseInt(tx.blockNumber));
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error fetching transactions from LineaScan:", error);
+  }
 };
 
 // === FUNCTION: Subscribe to New Blocks via WebSocket ===
 const subscribeToNewBlocks = () => {
-    console.log("🔌 Subscribing to new blocks...");
-    provider.on("block", async (blockNumber) => {
-        console.log(`📡 New block detected: ${blockNumber}`);
-        const blockData = await provider.getBlock(blockNumber, true); // 'true' includes transactions
-
-        for (const tx of blockData.prefetchedTransactions) { // Access transactions using 'prefetchedTransactions'
-            if (tx.to && tx.to.toLowerCase() === CONTRACT_ADDRESS) {
-                decodeAttestation(tx.hash, blockNumber);
-            }
-        }
-    });
+  console.log("🔌 Subscribing to new blocks...");
+  provider.on("block", async (blockNumber) => {
+    console.log(`📡 New block detected: ${blockNumber}`);
+    const blockWithTx = await provider.getBlockWithTransactions(blockNumber);
+    for (const tx of blockWithTx.transactions) {
+      if (tx.to && tx.to.toLowerCase() === CONTRACT_ADDRESS) {
+        decodeAttestation(tx.hash, blockNumber);
+      }
+    }
+  });
 };
 
 // === STARTUP SEQUENCE ===
 (async () => {
-    console.log("🚀 Attestation monitoring service starting...");
-    
-    // **Ensure new JSON & CSV file is created on each run**
-    initializeFiles();
-    await fetchTransactionsFromExplorer(); // Fetch from LineaScan Explorer
-    //subscribeToNewBlocks(); // Start real-time monitoring
+  console.log("🚀 Attestation monitoring service starting...");
+  // Create new JSON & CSV files for each run.
+  initializeFiles();
+  // 1) Fetch historical data from LineaScan Explorer.
+  await fetchTransactionsFromExplorer();
+  // 2) Optional: Start real-time monitoring.
+  // subscribeToNewBlocks();
 })();
