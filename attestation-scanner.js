@@ -49,7 +49,7 @@ function decodeAttestationData(encodedData) {
     console.warn("⚠️ Skipping empty attestation data.");
     return null;
   }
-  console.log("🔍 Encoded Attestation Data (Hex):", encodedData);
+//  console.log("🔍 Encoded Attestation Data (Hex):", encodedData);
   try {
     const decoded = ethers.utils.defaultAbiCoder.decode(
       ["bool", "string", "address"],
@@ -81,7 +81,7 @@ const initializeFiles = () => {
   fs.writeFileSync(JSON_FILE, "", "utf8");
   fs.writeFileSync(
     CSV_FILE,
-    "txHash,blockNumber,schemaId,subject,isPositive,articlePage,submitter,timestamp\n",
+    "txHash,blockNumber,from,timestamp,articlePage,positiveFeedback,negativeFeedback\n",
     "utf8"
   );
 };
@@ -97,7 +97,7 @@ const saveToCSV = (attestation) => {
   const isPositive = String(attestation.isPositive);
   const articlePage = String(attestation.articlePage);
   const submitter = String(attestation.submitter);
-  const csvLine = `${attestation.txHash},${attestation.blockNumber},${attestation.schemaId},${attestation.subject},${isPositive},${articlePage},${submitter},${attestation.timestamp}\n`;
+  const csvLine = `${attestation.txHash},${attestation.blockNumber},${attestation.from},${attestation.timestamp},${attestation.articlePage},${attestation.positiveFeedback},${attestation.negativeFeedback}\n`;
   fs.appendFileSync(CSV_FILE, csvLine, "utf8");
 };
 
@@ -119,10 +119,10 @@ const decodeAttestation = async (txHash, blockNumber) => {
       console.warn(`⚠️ Could not decode transaction: ${txHash}`);
       return;
     }
-    console.log(`🔍 Decoded transaction data for ${txHash}:`, decoded);
+//    console.log(`🔍 Decoded transaction data for ${txHash}:`, decoded);
 
     const [attestationPayload, validationPayloads] = decoded.args;
-    console.log("🔍 Extracted Attestation Payload:", attestationPayload);
+//    console.log("🔍 Extracted Attestation Payload:", attestationPayload);
     if (!attestationPayload || Object.keys(attestationPayload).length === 0) {
       console.error("❌ Error: attestationPayload is empty or undefined.");
       return;
@@ -131,7 +131,7 @@ const decodeAttestation = async (txHash, blockNumber) => {
     const schemaId = attestationPayload.schemaId;
     const rawSubject = attestationPayload.subject;
     const attestationDataEncoded = attestationPayload.attestationData;
-    console.log("🔍 Raw Attestation Data (Encoded):", attestationDataEncoded);
+//    console.log("🔍 Raw Attestation Data (Encoded):", attestationDataEncoded);
 
     let decodedAttestationData = decodeAttestationData(attestationDataEncoded);
     if (!decodedAttestationData) {
@@ -155,15 +155,14 @@ const decodeAttestation = async (txHash, blockNumber) => {
     const attestation = {
       txHash,
       blockNumber,
-      schemaId,
-      subject: subjectAddress,
-      isPositive: decodedAttestationData.isPositive,
+      from: decodedAttestationData.submitter,
+      timestamp: blockTimestamp,
       articlePage: decodedAttestationData.articlePage,
-      submitter: decodedAttestationData.submitter,
-      timestamp: blockTimestamp
+      positiveFeedback: decodedAttestationData.isPositive ? 1 : 0,
+      negativeFeedback: decodedAttestationData.isPositive ? 0 : 1,
     };
 
-    console.log("📜 New Attestation Found:", attestation);
+    console.log("📜 Attestation Found:", attestation);
     saveToJSON(attestation);
     saveToCSV(attestation);
   } catch (error) {
